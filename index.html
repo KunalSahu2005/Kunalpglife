@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mini Store</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, sans-serif; background: #f4f6f8; color: #222; }
+    nav { background: #1f2937; color: #fff; padding: 12px 20px; display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+    nav .logo { font-weight: bold; font-size: 20px; margin-right: auto; }
+    nav button { background: none; border: none; color: #fff; cursor: pointer; font-size: 15px; }
+    nav button:hover { text-decoration: underline; }
+    .container { max-width: 1000px; margin: 20px auto; padding: 0 16px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 16px; }
+    .card { background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+    .card img { width: 100%; height: 140px; object-fit: cover; }
+    .card .body { padding: 12px; }
+    .price { color: #16a34a; font-weight: bold; margin: 6px 0; }
+    .btn { background: #2563eb; color: #fff; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; }
+    .btn:hover { background: #1d4ed8; }
+    .btn.red { background: #dc2626; }
+    .btn.gray { background: #6b7280; }
+    input { padding: 9px; border: 1px solid #ccc; border-radius: 6px; width: 100%; margin-bottom: 10px; }
+    .box { background: #fff; padding: 20px; border-radius: 10px; max-width: 380px; margin: 30px auto; box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+    .row { background: #fff; padding: 12px; border-radius: 8px; margin-bottom: 10px; display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+    .msg { padding: 10px; border-radius: 6px; margin-bottom: 12px; background: #dbeafe; }
+    .err { background: #fee2e2; }
+    .search { display: flex; gap: 8px; margin-bottom: 16px; }
+    .search input { margin: 0; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // Helper to talk to our backend
+    async function api(path, method = "GET", body, token) {
+      const res = await fetch("/api" + path, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: "Bearer " + token } : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Something went wrong");
+      return data;
+    }
+
+    function App() {
+      const [page, setPage] = useState("home");
+      const [token, setToken] = useState(localStorage.getItem("token") || "");
+      const [user, setUser] = useState(JSON.parse(localStorage.getItem("user") || "null"));
+      const [cart, setCart] = useState([]); // [{ product, qty }]
+      const [message, setMessage] = useState({ text: "", error: false });
+
+      const show = (text, error = false) => {
+        setMessage({ text, error });
+        setTimeout(() => setMessage({ text: "", error: false }), 3000);
+      };
+
+      const saveLogin = (data) => {
+        setToken(data.token);
+        setUser(data.user);
+        localStorage.setItem("token", data.token);
+        localStorage.setItem("user", JSON.stringify(data.user));
+        setPage("home");
+      };
+
+      const logout = () => {
+        setToken(""); setUser(null); setCart([]);
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        setPage("home");
+      };
+
+      const addToCart = (product) => {
+        const found = cart.find((c) => c.product._id === product._id);
+        if (found) {
+          setCart(cart.map((c) => c.product._id === product._id ? { ...c, qty: c.qty + 1 } : c));
+        } else {
+          setCart([...cart, { product, qty: 1 }]);
+        }
+        show(product.name + " added to cart");
+      };
+
+      return (
+        <div>
+          <nav>
+            <span className="logo">🛒 Mini Store</span>
+            <button onClick={() => setPage("home")}>Home</button>
+            <button onClick={() => setPage("cart")}>Cart ({cart.reduce((s, c) => s + c.qty, 0)})</button>
+            {user && <button onClick={() => setPage("orders")}>My Orders</button>}
+            {user ? (
+              <>
+                <span>Hi, {user.name}</span>
+                <button onClick={logout}>Logout</button>
+              </>
+            ) : (
+              <button onClick={() => setPage("login")}>Login / Signup</button>
+            )}
+          </nav>
+
+          <div className="container">
+            {message.text && <div className={"msg " + (message.error ? "err" : "")}>{message.text}</div>}
+            {page === "home" && <Home addToCart={addToCart} token={token} show={show} />}
+            {page === "login" && <Login saveLogin={saveLogin} show={show} />}
+            {page === "cart" && <Cart cart={cart} setCart={setCart} token={token} setPage={setPage} show={show} />}
+            {page === "orders" && <Orders token={token} />}
+          </div>
+        </div>
+      );
+    }
+
+    function Home({ addToCart, token, show }) {
+      const [products, setProducts] = useState([]);
+      const [search, setSearch] = useState("");
+      const [form, setForm] = useState({ name: "", price: "" });
+
+      const load = () => api("/products?search=" + search).then(setProducts).catch((e) => show(e.message, true));
+      useEffect(() => { load(); }, []);
+
+      const addProduct = async () => {
+        try {
+          await api("/products", "POST", { name: form.name, price: Number(form.price) }, token);
+          setForm({ name: "", price: "" });
+          show("Product added");
+          load();
+        } catch (e) { show(e.message, true); }
+      };
+
+      const removeProduct = async (id) => {
+        try { await api("/products/" + id, "DELETE", null, token); load(); }
+        catch (e) { show(e.message, true); }
+      };
+
+      return (
+        <div>
+          <div className="search">
+            <input placeholder="Search products..." value={search} onChange={(e) => setSearch(e.target.value)} />
+            <button className="btn" onClick={load}>Search</button>
+          </div>
+
+          {token && (
+            <div className="row">
+              <b>Add product:</b>
+              <input style={{ width: 180, margin: 0 }} placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              <input style={{ width: 100, margin: 0 }} placeholder="Price" type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
+              <button className="btn" onClick={addProduct}>Add</button>
+            </div>
+          )}
+
+          <div className="grid">
+            {products.map((p) => (
+              <div className="card" key={p._id}>
+                <img src={p.image} alt={p.name} />
+                <div className="body">
+                  <b>{p.name}</b>
+                  <div className="price">₹{p.price}</div>
+                  <small>{p.description}</small>
+                  <div style={{ marginTop: 10, display: "flex", gap: 6 }}>
+                    <button className="btn" onClick={() => addToCart(p)}>Add to Cart</button>
+                    {token && <button className="btn red" onClick={() => removeProduct(p._id)}>Delete</button>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          {products.length === 0 && <p>No products found.</p>}
+        </div>
+      );
+    }
+
+    function Login({ saveLogin, show }) {
+      const [isSignup, setIsSignup] = useState(false);
+      const [form, setForm] = useState({ name: "", email: "", password: "" });
+
+      const submit = async () => {
+        try {
+          const data = await api(isSignup ? "/auth/signup" : "/auth/login", "POST", form);
+          saveLogin(data);
+        } catch (e) { show(e.message, true); }
+      };
+
+      return (
+        <div className="box">
+          <h2>{isSignup ? "Signup" : "Login"}</h2>
+          {isSignup && <input placeholder="Name" onChange={(e) => setForm({ ...form, name: e.target.value })} />}
+          <input placeholder="Email" onChange={(e) => setForm({ ...form, email: e.target.value })} />
+          <input placeholder="Password" type="password" onChange={(e) => setForm({ ...form, password: e.target.value })} />
+          <button className="btn" onClick={submit}>{isSignup ? "Signup" : "Login"}</button>
+          <p onClick={() => setIsSignup(!isSignup)} style={{ cursor: "pointer", color: "#2563eb" }}>
+            {isSignup ? "Already have an account? Login" : "New user? Signup"}
+          </p>
+        </div>
+      );
+    }
+
+    function Cart({ cart, setCart, token, setPage, show }) {
+      const total = cart.reduce((s, c) => s + c.product.price * c.qty, 0);
+
+      const changeQty = (id, change) =>
+        setCart(cart.map((c) => c.product._id === id ? { ...c, qty: Math.max(1, c.qty + change) } : c));
+      const remove = (id) => setCart(cart.filter((c) => c.product._id !== id));
+
+      const placeOrder = async () => {
+        if (!token) { show("Please login to place order", true); setPage("login"); return; }
+        try {
+          await api("/orders", "POST", { items: cart.map((c) => ({ productId: c.product._id, qty: c.qty })) }, token);
+          setCart([]);
+          show("Order placed successfully! 🎉");
+          setPage("orders");
+        } catch (e) { show(e.message, true); }
+      };
+
+      if (cart.length === 0) return <h3>Your cart is empty.</h3>;
+
+      return (
+        <div>
+          <h2>Your Cart</h2>
+          {cart.map((c) => (
+            <div className="row" key={c.product._id}>
+              <b>{c.product.name}</b>
+              <span>₹{c.product.price}</span>
+              <span>
+                <button className="btn gray" onClick={() => changeQty(c.product._id, -1)}>-</button>
+                {" "}{c.qty}{" "}
+                <button className="btn gray" onClick={() => changeQty(c.product._id, 1)}>+</button>
+              </span>
+              <span>₹{c.product.price * c.qty}</span>
+              <button className="btn red" onClick={() => remove(c.product._id)}>Remove</button>
+            </div>
+          ))}
+          <h3>Total: ₹{total}</h3>
+          <button className="btn" onClick={placeOrder}>Place Order</button>
+        </div>
+      );
+    }
+
+    function Orders({ token }) {
+      const [orders, setOrders] = useState([]);
+      useEffect(() => { api("/orders", "GET", null, token).then(setOrders).catch(() => {}); }, []);
+
+      return (
+        <div>
+          <h2>My Orders</h2>
+          {orders.length === 0 && <p>No orders yet.</p>}
+          {orders.map((o) => (
+            <div className="row" key={o._id} style={{ display: "block" }}>
+              <small>{new Date(o.createdAt).toLocaleString()}</small>
+              {o.items.map((i, n) => (
+                <div key={n}>{i.name} × {i.qty} — ₹{i.price * i.qty}</div>
+              ))}
+              <b>Total: ₹{o.total}</b>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
